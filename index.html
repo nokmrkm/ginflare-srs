@@ -104,8 +104,9 @@ const WORDS = [
 ];
 
 // SM-2
-function sm2Update(card, correct) {
-  const q = correct ? 5 : 1;
+function sm2Update(card, q) {
+  // q: 1=知らなかった 2=難しい 4=普通 5=簡単 (or boolean→converted)
+  if(typeof q==="boolean") q=q?5:1;
   if (q < 3) { card.repetitions = 0; card.interval = 1; }
   else {
     if (card.repetitions === 0) card.interval = 1;
@@ -161,6 +162,10 @@ function App() {
   const [addErr,setAddErr]=useState("");
   const [csvMsg,setCsvMsg]=useState("");
   const [phase,setPhase]=useState("dash");
+  const [practiceMode,setPracticeMode]=useState(false);
+  const [practiceConfig,setPracticeConfig]=useState({range:"all",count:"all",format:"choice"});
+  const [quizFormat,setQuizFormat]=useState(()=>localStorage.getItem("ginflare_format")||"choice");
+  const [cardFlipped,setCardFlipped]=useState(false);
   const [queue,setQueue]=useState([]);
   const [cur,setCur]=useState(null);
   const [opts,setOpts]=useState([]);
@@ -175,6 +180,7 @@ function App() {
 
   const save = (c) => { try{localStorage.setItem(LSKEY,JSON.stringify(c));}catch{} };
   const saveCustom = (cw) => { try{localStorage.setItem(LSKEY_CUSTOM,JSON.stringify(cw));}catch{} };
+  const saveFormat = (f) => { try{localStorage.setItem("ginflare_format",f);}catch{} };
   const ALL_WORDS = [...WORDS, ...customWords];
   const getCard = en => cards[en]||blank();
   const dueList=ALL_WORDS.filter(w=>isDue(getCard(w[0])));
@@ -189,26 +195,50 @@ function App() {
   }
   function startSession() {
     const q=shuffle([...shuffle(dueList.filter(w=>isNew(getCard(w[0])))).slice(0,20),...shuffle(dueList.filter(w=>!isNew(getCard(w[0]))))]);
-    qRef.current=q; setSCorr(0); setSTotal(0); loadNext(q,cards); setPhase("quiz");
+    qRef.current=q; setSCorr(0); setSTotal(0); setPracticeMode(false); loadNext(q,cards); setPhase("quiz");
   }
+  function startPractice(cfg) {
+    const {range,count}=cfg;
+    let pool=range==="all"?ALL_WORDS:range==="due"?dueList:ALL_WORDS.filter(w=>isNew(getCard(w[0])));
+    pool=shuffle(pool);
+    if(count!=="all") pool=pool.slice(0,parseInt(count));
+    qRef.current=pool; setSCorr(0); setSTotal(0); setPracticeMode(true); loadNext(pool,cards); setPhase("quiz");
+  }
+  // currentFormat allows passing format at call time (for practice mode overrides)
+  const activeFormat = practiceConfig.format && practiceMode ? practiceConfig.format : quizFormat;
   function loadNext(q,currentCards) {
     clearInterval(timerRef.current);
     if(q.length===0){setPhase("done");return;}
     const word=q[0]; const {opts:o,corrSet:cs}=buildQ(word);
-    setCur(word); setOpts(o); setCorrSet(cs); setPicked(null); setOk(null); setCdwn(0); setQueue(q);
+    setCur(word); setOpts(o); setCorrSet(cs); setPicked(null); setOk(null); setCdwn(0); setCardFlipped(false); setQueue(q);
   }
   function handleAnswer(ans) {
     if(ok!==null) return;
     const correct=corrSet.includes(ans);
     setPicked(ans); setOk(correct); setSTotal(p=>p+1);
     if(correct){setSCorr(p=>p+1); speak(cur[0]);}
-    const updated={...cards,[cur[0]]:sm2Update({...getCard(cur[0])},correct)};
-    setCards(updated); save(updated);
+    let updated=cards;
+    if(!practiceMode){
+      updated={...cards,[cur[0]]:sm2Update({...getCard(cur[0])},correct?5:1)};
+      setCards(updated); save(updated);
+    }
     let t=1.8; setCdwn(t);
     timerRef.current=setInterval(()=>{
       t=parseFloat((t-0.1).toFixed(1)); setCdwn(Math.max(0,t));
       if(t<=0){clearInterval(timerRef.current); const next=qRef.current.slice(1); qRef.current=next; loadNext(next,updated);}
     },100);
+  }
+  function handleFlash(q) {
+    // q: 1=知らなかった 2=難しい 4=普通 5=簡単
+    const correct=q>=4;
+    setSTotal(p=>p+1);
+    if(correct){setSCorr(p=>p+1); speak(cur[0]);}
+    let updated=cards;
+    if(!practiceMode){
+      updated={...cards,[cur[0]]:sm2Update({...getCard(cur[0])},q)};
+      setCards(updated); save(updated);
+    }
+    const next=qRef.current.slice(1); qRef.current=next; loadNext(next,updated);
   }
 
   const forecast=Array.from({length:7},(_,i)=>{
@@ -244,10 +274,21 @@ function App() {
             </div>
             <div style={{background:C.surface,borderRadius:16,padding:20,marginBottom:14}}>
               <button onClick={startSession} disabled={dueList.length===0}
-                style={{width:"100%",padding:14,border:"none",borderRadius:12,fontFamily:"inherit",fontSize:".95rem",fontWeight:700,cursor:dueList.length>0?"pointer":"not-allowed",background:dueList.length>0?C.accent:C.surface2,color:dueList.length>0?C.bg:C.muted,opacity:dueList.length===0?.5:1}}>
-                {dueList.length>0?`📖 今日の学習を開始（${dueList.length}問）`:"✅ 今日の分は完了！"}
+                style={{width:"100%",padding:14,border:"none",borderRadius:12,fontFamily:"inherit",fontSize:".95rem",fontWeight:700,cursor:dueList.length>0?"pointer":"not-allowed",background:dueList.length>0?(quizFormat==="flash"?"#a78bfa":C.accent):C.surface2,color:dueList.length>0?C.bg:C.muted,opacity:dueList.length===0?.5:1,marginBottom:8}}>
+                {dueList.length>0
+                  ? quizFormat==="flash"
+                    ? `🃏 今日の学習（フラッシュ）${dueList.length}問`
+                    : `📖 今日の学習を開始（${dueList.length}問）`
+                  : "✅ 今日の分は完了！"}
               </button>
-              {dueList.length===0&&<div style={{textAlign:"center",marginTop:10,fontSize:".76rem",color:C.muted}}>次の復習は明日以降です 🌙</div>}
+              {dueList.length>0&&quizFormat==="flash"&&(
+                <div style={{fontSize:".7rem",color:"#a78bfa",opacity:.8,textAlign:"center",marginBottom:8}}>SM-2に記録されます ✦ 忘却曲線で最適スケジュール</div>
+              )}
+              {dueList.length===0&&<div style={{textAlign:"center",fontSize:".76rem",color:C.muted,marginBottom:10}}>次の復習は明日以降です 🌙</div>}
+              <button onClick={()=>setPhase("practice_setup")}
+                style={{width:"100%",padding:12,border:`1.5px solid ${C.blue}`,borderRadius:12,fontFamily:"inherit",fontSize:".88rem",fontWeight:700,cursor:"pointer",background:"transparent",color:C.blue}}>
+                🔁 練習モード（制限なし）
+              </button>
             </div>
             <div style={{background:C.surface,borderRadius:16,padding:20}}>
               <div style={{fontSize:".66rem",fontWeight:700,color:C.muted,letterSpacing:".1em",textTransform:"uppercase",marginBottom:12}}>今後7日間の予定</div>
@@ -265,55 +306,190 @@ function App() {
             </div>
           </>}
 
+          {phase==="practice_setup"&&(
+            <div style={{background:C.surface,borderRadius:16,padding:24}}>
+              <div style={{fontFamily:"Georgia,serif",fontSize:"1.3rem",color:C.blue,marginBottom:4}}>🔁 練習モード</div>
+              <div style={{fontSize:".75rem",color:C.muted,marginBottom:20}}>SM-2の記録には影響しません。何周でも自由に。</div>
+              <div style={{fontSize:".7rem",fontWeight:700,color:C.muted,letterSpacing:".08em",textTransform:"uppercase",marginBottom:8}}>出題範囲</div>
+              <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:20}}>
+                {[
+                  ["all",`全単語（${ALL_WORDS.length}語）`],
+                  ["due",`今日の復習分のみ（${dueList.length}語）`],
+                  ["new",`未学習のみ（${ALL_WORDS.filter(w=>isNew(getCard(w[0]))).length}語）`],
+                ].map(([val,label])=>(
+                  <button key={val} onClick={()=>setPracticeConfig(c=>({...c,range:val}))}
+                    style={{padding:"11px 16px",border:`1.5px solid ${practiceConfig.range===val?C.blue:C.border}`,borderRadius:10,fontFamily:"inherit",fontSize:".84rem",background:practiceConfig.range===val?"#60a5fa18":"transparent",color:practiceConfig.range===val?C.blue:C.text,textAlign:"left",cursor:"pointer",fontWeight:practiceConfig.range===val?700:400}}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <div style={{fontSize:".7rem",fontWeight:700,color:C.muted,letterSpacing:".08em",textTransform:"uppercase",marginBottom:8}}>出題数</div>
+              <div style={{display:"flex",gap:8,marginBottom:24}}>
+                {[["all","全部"],["100","100問"],["50","50問"],["20","20問"]].map(([val,label])=>(
+                  <button key={val} onClick={()=>setPracticeConfig(c=>({...c,count:val}))}
+                    style={{flex:1,padding:"10px 4px",border:`1.5px solid ${practiceConfig.count===val?C.blue:C.border}`,borderRadius:10,fontFamily:"inherit",fontSize:".78rem",background:practiceConfig.count===val?"#60a5fa18":"transparent",color:practiceConfig.count===val?C.blue:C.text,cursor:"pointer",fontWeight:practiceConfig.count===val?700:400}}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <div style={{fontSize:".7rem",fontWeight:700,color:C.muted,letterSpacing:".08em",textTransform:"uppercase",marginBottom:8}}>問題形式</div>
+              <div style={{display:"flex",gap:8,marginBottom:24}}>
+                {[["choice","📝 4択"],["flash","🃏 フラッシュカード"]].map(([val,label])=>(
+                  <button key={val} onClick={()=>setPracticeConfig(c=>({...c,format:val}))}
+                    style={{flex:1,padding:"10px 8px",border:`1.5px solid ${practiceConfig.format===val?"#a78bfa":C.border}`,borderRadius:10,fontFamily:"inherit",fontSize:".8rem",fontWeight:700,background:practiceConfig.format===val?"#a78bfa18":"transparent",color:practiceConfig.format===val?"#a78bfa":C.text,cursor:"pointer"}}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <button onClick={()=>startPractice(practiceConfig)}
+                style={{width:"100%",padding:14,border:"none",borderRadius:12,background:C.blue,color:C.bg,fontFamily:"inherit",fontSize:".95rem",fontWeight:700,cursor:"pointer",marginBottom:10}}>
+                スタート
+              </button>
+              <button onClick={()=>setPhase("dash")}
+                style={{width:"100%",padding:11,border:`1px solid ${C.border}`,borderRadius:12,background:"transparent",color:C.muted,fontFamily:"inherit",fontSize:".84rem",cursor:"pointer"}}>
+                キャンセル
+              </button>
+            </div>
+          )}
+
           {phase==="quiz"&&cur&&<>
             <div style={{background:C.surface2,borderRadius:99,height:6,overflow:"hidden",marginBottom:6}}>
-              <div style={{height:"100%",width:`${pct}%`,background:`linear-gradient(90deg,${C.accent},#f5a623)`,borderRadius:99,transition:"width .4s"}}/>
+              <div style={{height:"100%",width:`${pct}%`,background:`linear-gradient(90deg,${activeFormat==="flash"?"#a78bfa":C.accent},#f5a623)`,borderRadius:99,transition:"width .4s"}}/>
             </div>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:".7rem",color:C.muted,marginBottom:14}}>
-              <span style={{fontSize:".62rem",padding:"2px 8px",borderRadius:99,fontWeight:700,background:isNew(getCard(cur[0]))?"#60a5fa22":"#e8c54722",color:isNew(getCard(cur[0]))?C.blue:C.accent}}>
-                {isNew(getCard(cur[0]))?"NEW":"復習"}
+              <span style={{fontSize:".62rem",padding:"2px 8px",borderRadius:99,fontWeight:700,
+                background:practiceMode?"#60a5fa33":activeFormat==="flash"?"#a78bfa22":isNew(getCard(cur[0]))?"#60a5fa22":"#e8c54722",
+                color:practiceMode?C.blue:activeFormat==="flash"?"#a78bfa":isNew(getCard(cur[0]))?C.blue:C.accent}}>
+                {practiceMode?"🔁 練習":activeFormat==="flash"?"🃏 フラッシュ":isNew(getCard(cur[0]))?"NEW":"復習"}
               </span>
               <span>{sTotal+1} / {totalInSession}問　残り <strong style={{color:C.text}}>{queue.length}</strong></span>
             </div>
-            <div style={{background:C.surface,borderRadius:16,padding:"20px 20px 18px",marginBottom:12,position:"relative",overflow:"hidden"}}>
-              <div style={{position:"absolute",top:0,left:0,right:0,height:3,background:`linear-gradient(90deg,${C.accent},transparent)`}}/>
-              <div onClick={()=>speak(cur[0])} style={{fontFamily:"Georgia,serif",fontSize:"2rem",color:C.text,cursor:"pointer",display:"inline-flex",alignItems:"center",gap:8,lineHeight:1.2,marginBottom:4}}>
-                {cur[0]} <span style={{fontSize:".9rem",opacity:.45}}>🔊</span>
-              </div>
-              {ok!==null&&(
-                <div style={{marginTop:14,borderTop:`1px solid ${C.border}`,paddingTop:14}}>
-                  <div style={{marginBottom:12}}>
-                    {getPOSSections(cur[1]).map(({pos,color,meanings})=>(
-                      <div key={pos} style={{display:"flex",gap:8,alignItems:"flex-start",marginBottom:6}}>
-                        <span style={{fontSize:".62rem",padding:"2px 7px",borderRadius:99,fontWeight:700,background:color+"22",color,whiteSpace:"nowrap",marginTop:2}}>{pos}</span>
-                        <span style={{fontSize:".84rem",color:C.text,lineHeight:1.6}}>{meanings.join("、")}</span>
+
+            {/* ── フラッシュカード形式 ── */}
+            {activeFormat==="flash"&&<>
+              <div style={{background:C.surface,borderRadius:16,padding:"24px 20px",marginBottom:12,position:"relative",overflow:"hidden",cursor:cardFlipped?"default":"pointer",minHeight:200}}
+                onClick={()=>{if(!cardFlipped){setCardFlipped(true);speak(cur[0]);}}}>
+                <div style={{position:"absolute",top:0,left:0,right:0,height:3,background:`linear-gradient(90deg,#a78bfa,transparent)`}}/>
+
+                {/* 単語（常に表示） */}
+                <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
+                  <div style={{fontFamily:"Georgia,serif",fontSize:"2rem",color:C.text,lineHeight:1}}>
+                    {cur[0]}
+                  </div>
+                  <span style={{fontSize:".8rem",opacity:.4}}>🔊</span>
+                </div>
+
+                {/* 例文（めくった後のみ表示・ターゲット単語をハイライト） */}
+                {cardFlipped&&<div style={{fontSize:".95rem",lineHeight:1.8,padding:"12px 14px",background:C.surface2,borderRadius:10,marginBottom:16}}>
+                  {(()=>{
+                    const ex=cur[2];
+                    const word=cur[0];
+                    const regex=new RegExp(`(${word}\\w*)`, "gi");
+                    const parts=ex.split(regex);
+                    return parts.map((p,i)=>
+                      regex.test(p)
+                        ? <span key={i} style={{color:"#a78bfa",fontWeight:700,borderBottom:"2px solid #a78bfa88"}}>{p}</span>
+                        : <span key={i} style={{color:C.text}}>{p}</span>
+                    );
+                  })()}
+                </div>}
+
+                {/* めくる前のヒント */}
+                {!cardFlipped&&(
+                  <div style={{marginTop:16,fontSize:".78rem",color:C.muted,display:"flex",alignItems:"center",gap:6}}>
+                    <span>👆</span> タップして意味を確認
+                  </div>
+                )}
+
+                {/* めくった後：意味＋日本語訳 */}
+                {cardFlipped&&(
+                  <div style={{borderTop:`1px solid ${C.border}`,paddingTop:16}}>
+                    {/* 日本語訳 */}
+                    <div style={{fontSize:".82rem",color:C.muted,marginBottom:14,paddingLeft:2}}>{cur[3]}</div>
+                    {/* 意味一覧（品詞別・文脈の意味をハイライト） */}
+                    {getPOSSections(cur[1]).map(({pos,color,meanings},si)=>(
+                      <div key={pos} style={{display:"flex",gap:8,alignItems:"flex-start",marginBottom:8}}>
+                        <span style={{fontSize:".62rem",padding:"2px 7px",borderRadius:99,fontWeight:700,background:color+"22",color,whiteSpace:"nowrap",marginTop:3}}>{pos}</span>
+                        <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
+                          {meanings.map((m,mi)=>(
+                            <span key={mi} style={{
+                              fontSize:".84rem",
+                              lineHeight:1.6,
+                              padding: mi===0&&si===0?"2px 8px":"0",
+                              borderRadius: mi===0&&si===0?6:0,
+                              background: mi===0&&si===0?"#a78bfa28":"transparent",
+                              color: mi===0&&si===0?"#c4b5fd":C.text,
+                              fontWeight: mi===0&&si===0?700:400,
+                            }}>
+                              {mi>0?"、":""}{m}
+                            </span>
+                          ))}
+                        </div>
                       </div>
                     ))}
                   </div>
-                  <div onClick={()=>speak(cur[2])} style={{fontSize:".84rem",color:C.text,fontStyle:"italic",cursor:"pointer",marginBottom:5,padding:"8px 12px",background:C.surface2,borderRadius:8}}>
-                    🔊 {cur[2]}
-                  </div>
-                  <div style={{fontSize:".78rem",color:C.muted,paddingLeft:4}}>{cur[3]}</div>
+                )}
+              </div>
+
+              {cardFlipped&&(
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
+                  {[
+                    [1,"知らなかった",C.wrong],
+                    [2,"難しい","#fb923c"],
+                    [4,"普通",C.blue],
+                    [5,"簡単",C.correct],
+                  ].map(([q,label,color])=>(
+                    <button key={q} onClick={()=>handleFlash(q)}
+                      style={{padding:"14px 8px",border:`1.5px solid ${color}44`,borderRadius:12,fontFamily:"inherit",fontSize:".84rem",fontWeight:700,background:color+"18",color,cursor:"pointer"}}>
+                      {label}
+                    </button>
+                  ))}
                 </div>
               )}
-            </div>
-            <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:12}}>
-              {opts.map(o=>{
-                let bg=C.surface2,border=`1.5px solid ${C.border}`,color=C.text,opacity=1,fw=400;
-                if(ok!==null){
-                  if(corrSet.includes(o)){bg=C.correct+"22";border=`1.5px solid ${C.correct}`;color=C.correct;fw=700;}
-                  else if(o===picked){bg=C.wrong+"22";border=`1.5px solid ${C.wrong}`;color=C.wrong;}
-                  else{opacity=0.3;}
-                }
-                return(<button key={o} onClick={()=>handleAnswer(o)} disabled={ok!==null} style={{padding:"13px 18px",border,borderRadius:12,cursor:ok!==null?"default":"pointer",fontFamily:"inherit",fontSize:".88rem",background:bg,color,textAlign:"left",opacity,fontWeight:fw,transition:"all .15s"}}>{o}</button>);
-              })}
-            </div>
-            {ok!==null&&(
-              <div style={{textAlign:"center",padding:"10px 14px",borderRadius:10,background:ok?C.correct+"22":C.wrong+"22",color:ok?C.correct:C.wrong,fontWeight:700,fontSize:".88rem"}}>
-                {ok?"✅ 正解！":`❌ 正解：${corrSet[0]}`}
-                <div style={{fontSize:".7rem",opacity:.7,marginTop:4}}>{cdwn>0?`${cdwn.toFixed(1)}秒後に次の問題…`:"読み込み中…"}</div>
+            </>}
+
+            {/* ── 4択形式 ── */}
+            {activeFormat==="choice"&&<>
+              <div style={{background:C.surface,borderRadius:16,padding:"20px 20px 18px",marginBottom:12,position:"relative",overflow:"hidden"}}>
+                <div style={{position:"absolute",top:0,left:0,right:0,height:3,background:`linear-gradient(90deg,${C.accent},transparent)`}}/>
+                <div onClick={()=>speak(cur[0])} style={{fontFamily:"Georgia,serif",fontSize:"2rem",color:C.text,cursor:"pointer",display:"inline-flex",alignItems:"center",gap:8,lineHeight:1.2,marginBottom:4}}>
+                  {cur[0]} <span style={{fontSize:".9rem",opacity:.45}}>🔊</span>
+                </div>
+                {ok!==null&&(
+                  <div style={{marginTop:14,borderTop:`1px solid ${C.border}`,paddingTop:14}}>
+                    <div style={{marginBottom:12}}>
+                      {getPOSSections(cur[1]).map(({pos,color,meanings})=>(
+                        <div key={pos} style={{display:"flex",gap:8,alignItems:"flex-start",marginBottom:6}}>
+                          <span style={{fontSize:".62rem",padding:"2px 7px",borderRadius:99,fontWeight:700,background:color+"22",color,whiteSpace:"nowrap",marginTop:2}}>{pos}</span>
+                          <span style={{fontSize:".84rem",color:C.text,lineHeight:1.6}}>{meanings.join("、")}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div onClick={()=>speak(cur[2])} style={{fontSize:".84rem",color:C.text,fontStyle:"italic",cursor:"pointer",marginBottom:5,padding:"8px 12px",background:C.surface2,borderRadius:8}}>
+                      🔊 {cur[2]}
+                    </div>
+                    <div style={{fontSize:".78rem",color:C.muted,paddingLeft:4}}>{cur[3]}</div>
+                  </div>
+                )}
               </div>
-            )}
+              <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:12}}>
+                {opts.map(o=>{
+                  let bg=C.surface2,border=`1.5px solid ${C.border}`,color=C.text,opacity=1,fw=400;
+                  if(ok!==null){
+                    if(corrSet.includes(o)){bg=C.correct+"22";border=`1.5px solid ${C.correct}`;color=C.correct;fw=700;}
+                    else if(o===picked){bg=C.wrong+"22";border=`1.5px solid ${C.wrong}`;color=C.wrong;}
+                    else{opacity=0.3;}
+                  }
+                  return(<button key={o} onClick={()=>handleAnswer(o)} disabled={ok!==null} style={{padding:"13px 18px",border,borderRadius:12,cursor:ok!==null?"default":"pointer",fontFamily:"inherit",fontSize:".88rem",background:bg,color,textAlign:"left",opacity,fontWeight:fw,transition:"all .15s"}}>{o}</button>);
+                })}
+              </div>
+              {ok!==null&&(
+                <div style={{textAlign:"center",padding:"10px 14px",borderRadius:10,background:ok?C.correct+"22":C.wrong+"22",color:ok?C.correct:C.wrong,fontWeight:700,fontSize:".88rem"}}>
+                  {ok?"✅ 正解！":`❌ 正解：${corrSet[0]}`}
+                  <div style={{fontSize:".7rem",opacity:.7,marginTop:4}}>{cdwn>0?`${cdwn.toFixed(1)}秒後に次の問題…`:"読み込み中…"}</div>
+                </div>
+              )}
+            </>}
           </>}
 
           {phase==="done"&&(
@@ -329,7 +505,19 @@ function App() {
                   </div>
                 ))}
               </div>
-              <button onClick={()=>setPhase("dash")} style={{width:"100%",padding:14,border:"none",borderRadius:12,background:C.accent,color:C.bg,fontFamily:"inherit",fontSize:".95rem",fontWeight:700,cursor:"pointer"}}>ダッシュボードへ</button>
+              <button onClick={()=>setPhase("dash")} style={{width:"100%",padding:14,border:"none",borderRadius:12,background:C.accent,color:C.bg,fontFamily:"inherit",fontSize:".95rem",fontWeight:700,cursor:"pointer",marginBottom: practiceMode?10:0}}>ダッシュボードへ</button>
+              {practiceMode&&(
+                <button onClick={()=>startPractice(practiceConfig)}
+                  style={{width:"100%",padding:14,border:`1.5px solid ${C.blue}`,borderRadius:12,background:"transparent",color:C.blue,fontFamily:"inherit",fontSize:".95rem",fontWeight:700,cursor:"pointer",marginBottom:10}}>
+                  🔁 もう一周
+                </button>
+              )}
+              {practiceMode&&(
+                <button onClick={()=>setPhase("practice_setup")}
+                  style={{width:"100%",padding:11,border:`1px solid ${C.border}`,borderRadius:12,background:"transparent",color:C.muted,fontFamily:"inherit",fontSize:".84rem",cursor:"pointer"}}>
+                  設定を変えてもう一度
+                </button>
+              )}
             </div>
           )}
         </>}
@@ -450,6 +638,20 @@ function App() {
             <div style={{fontSize:".66rem",fontWeight:700,color:C.muted,letterSpacing:".1em",textTransform:"uppercase",marginBottom:12}}>統計</div>
             <div style={{fontSize:".84rem",color:C.muted}}>登録単語数: <strong style={{color:C.text}}>{ALL_WORDS.length}語</strong>（銀フレ{WORDS.length}語 + カスタム{customWords.length}語）</div>
             <div style={{fontSize:".84rem",color:C.muted,marginTop:6}}>学習済み: <strong style={{color:C.text}}>{learnedCnt}語</strong></div>
+            <div style={{marginTop:16,paddingTop:14,borderTop:`1px solid ${C.border}`}}>
+              <div style={{fontSize:".7rem",fontWeight:700,color:C.muted,letterSpacing:".08em",textTransform:"uppercase",marginBottom:10}}>通常学習の形式</div>
+              <div style={{display:"flex",gap:8}}>
+                {[["choice","📝 4択"],["flash","🃏 フラッシュカード"]].map(([val,label])=>(
+                  <button key={val} onClick={()=>{setQuizFormat(val);saveFormat(val);}}
+                    style={{flex:1,padding:"10px 8px",border:`1.5px solid ${quizFormat===val?"#a78bfa":C.border}`,borderRadius:10,fontFamily:"inherit",fontSize:".8rem",fontWeight:700,background:quizFormat===val?"#a78bfa18":"transparent",color:quizFormat===val?"#a78bfa":C.muted,cursor:"pointer"}}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <div style={{fontSize:".7rem",color:C.muted,marginTop:8,lineHeight:1.6}}>
+                {quizFormat==="choice"?"4択：テンポよく大量に。初見・周回向き。":"フラッシュカード：自力で思い出してSM-2に4段階評価。長期定着向き。"}
+              </div>
+            </div>
           </div>
           <div style={{background:C.surface,borderRadius:16,padding:20,marginBottom:14}}>
             <div style={{fontSize:".66rem",fontWeight:700,color:C.muted,letterSpacing:".1em",textTransform:"uppercase",marginBottom:14}}>📱 iPhoneにアプリとして追加</div>
