@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>銀フレ SRS</title>
+<title>英単語学習</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -19,7 +19,7 @@ button { -webkit-tap-highlight-color: transparent; }
 <div id="root"></div>
 <script type="text/babel">
 const { useState, useRef, useEffect } = React;
-
+ 
 const WORDS = [
   ["begin","(動)始まる、始める","Begin now!","今、始めよう！"],
   ["work","(動)働く、作業する、うまくいく (名)仕事、作業、職場、作品","I work at a school.","私は学校で働いています。"],
@@ -102,7 +102,7 @@ const WORDS = [
   ["always","(副)いつも","Tex is always late for work.","テックスはいつも仕事に遅刻している。"],
   ["piece","(名)1個、1つ、作品、記事","She's holding a piece of paper.","彼女は一枚の紙を手に持っている。"],
 ];
-
+ 
 // SM-2
 function sm2Update(card, correct) {
   const q = correct ? 5 : 1;
@@ -122,7 +122,7 @@ const todayStr = () => new Date().toISOString().slice(0,10);
 const isNew = c => c.repetitions===0 && !c.dueDate;
 const isDue = c => !c.dueDate || c.dueDate<=todayStr();
 const blank = () => ({interval:1,repetitions:0,easeFactor:2.5,dueDate:null});
-
+ 
 function getMeanings(str) {
   return str.split(/(?=\s*\((?:動|名|形|副|代|接|前)\))/)
     .map(s=>s.replace(/^\s*\((?:動|名|形|副|代|接|前)\)\s*/,"").split(/[、，,]/).map(t=>t.trim()).filter(Boolean))
@@ -147,14 +147,19 @@ function speak(text) {
   const u=new SpeechSynthesisUtterance(text); u.lang="en-US";
   speechSynthesis.cancel(); speechSynthesis.speak(u);
 }
-
+ 
 const C={bg:"#0f0e17",surface:"#1a1929",surface2:"#232236",border:"#2e2c4a",
   accent:"#e8c547",correct:"#4ade80",wrong:"#ff6b6b",blue:"#60a5fa",muted:"#a7a9be",text:"#fffffe"};
 const LSKEY="ginflare_v5";
-
+const LSKEY_CUSTOM="ginflare_custom_words";
+ 
 function App() {
   const [cards,setCards]=useState(()=>{try{return JSON.parse(localStorage.getItem(LSKEY)||"{}");}catch{return {};}});
+  const [customWords,setCustomWords]=useState(()=>{try{return JSON.parse(localStorage.getItem(LSKEY_CUSTOM)||"[]");}catch{return [];}});
   const [tab,setTab]=useState("study");
+  const [addForm,setAddForm]=useState({en:"",meaning:"",exEn:"",exJa:""});
+  const [addErr,setAddErr]=useState("");
+  const [csvMsg,setCsvMsg]=useState("");
   const [phase,setPhase]=useState("dash");
   const [queue,setQueue]=useState([]);
   const [cur,setCur]=useState(null);
@@ -167,17 +172,19 @@ function App() {
   const [cdwn,setCdwn]=useState(0);
   const timerRef=useRef(null);
   const qRef=useRef([]);
-
+ 
   const save = (c) => { try{localStorage.setItem(LSKEY,JSON.stringify(c));}catch{} };
+  const saveCustom = (cw) => { try{localStorage.setItem(LSKEY_CUSTOM,JSON.stringify(cw));}catch{} };
+  const ALL_WORDS = [...WORDS, ...customWords];
   const getCard = en => cards[en]||blank();
-  const dueList=WORDS.filter(w=>isDue(getCard(w[0])));
-  const newCount=WORDS.filter(w=>isNew(getCard(w[0]))).length;
-  const learnedCnt=WORDS.filter(w=>!isNew(getCard(w[0]))).length;
-
+  const dueList=ALL_WORDS.filter(w=>isDue(getCard(w[0])));
+  const newCount=ALL_WORDS.filter(w=>isNew(getCard(w[0]))).length;
+  const learnedCnt=ALL_WORDS.filter(w=>!isNew(getCard(w[0]))).length;
+ 
   function buildQ(word) {
     const meanings=getMeanings(word[1]);
     const correct=meanings[Math.floor(Math.random()*meanings.length)];
-    const distractors=shuffle(WORDS.filter(w=>w[0]!==word[0]).flatMap(w=>getMeanings(w[1])).filter(t=>!meanings.includes(t))).slice(0,3);
+    const distractors=shuffle(ALL_WORDS.filter(w=>w[0]!==word[0]).flatMap(w=>getMeanings(w[1])).filter(t=>!meanings.includes(t))).slice(0,3);
     return {opts:shuffle([correct,...distractors]),corrSet:meanings};
   }
   function startSession() {
@@ -203,20 +210,20 @@ function App() {
       if(t<=0){clearInterval(timerRef.current); const next=qRef.current.slice(1); qRef.current=next; loadNext(next,updated);}
     },100);
   }
-
+ 
   const forecast=Array.from({length:7},(_,i)=>{
     const d=new Date(); d.setDate(d.getDate()+i); const ds=d.toISOString().slice(0,10);
-    return {label:i===0?"今日":i===1?"明日":`${i}日後`,count:WORDS.filter(w=>(cards[w[0]]?.dueDate||"")===ds).length};
+    return {label:i===0?"今日":i===1?"明日":`${i}日後`,count:ALL_WORDS.filter(w=>(cards[w[0]]?.dueDate||"")===ds).length};
   });
   const fMax=Math.max(...forecast.map(d=>d.count),1);
   const totalInSession=sTotal+queue.length+(ok!==null?0:1);
   const pct=totalInSession>0?Math.round(sTotal/totalInSession*100):0;
-
+ 
   return (
     <div style={{fontFamily:"'Noto Sans JP',sans-serif",background:C.bg,minHeight:"100vh",display:"flex",justifyContent:"center",padding:"20px 16px",backgroundImage:"radial-gradient(ellipse at 20% 50%,#1e1b4b33 0%,transparent 60%),radial-gradient(ellipse at 80% 20%,#31288133 0%,transparent 60%)"}}>
       <div style={{width:"100%",maxWidth:540}}>
         <div style={{textAlign:"center",marginBottom:18,paddingTop:6}}>
-          <div style={{fontFamily:"Georgia,serif",fontSize:"1.75rem",color:C.accent,fontWeight:700}}>銀フレ SRS</div>
+          <div style={{fontFamily:"Georgia,serif",fontSize:"1.75rem",color:C.accent,fontWeight:700}}>英単語学習</div>
           <div style={{fontSize:".72rem",color:C.muted,marginTop:3}}>忘却曲線に沿って最適タイミングで復習</div>
         </div>
         <div style={{display:"flex",gap:4,background:C.surface,borderRadius:12,padding:4,marginBottom:16}}>
@@ -224,7 +231,7 @@ function App() {
             <button key={k} onClick={()=>setTab(k)} style={{flex:1,padding:"8px 4px",border:"none",borderRadius:8,fontFamily:"inherit",fontSize:".78rem",fontWeight:700,cursor:"pointer",background:tab===k?C.accent:"transparent",color:tab===k?C.bg:C.muted,transition:"all .2s"}}>{l}</button>
           ))}
         </div>
-
+ 
         {tab==="study" && <>
           {phase==="dash" && <>
             <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:14}}>
@@ -257,7 +264,7 @@ function App() {
               </div>
             </div>
           </>}
-
+ 
           {phase==="quiz"&&cur&&<>
             <div style={{background:C.surface2,borderRadius:99,height:6,overflow:"hidden",marginBottom:6}}>
               <div style={{height:"100%",width:`${pct}%`,background:`linear-gradient(90deg,${C.accent},#f5a623)`,borderRadius:99,transition:"width .4s"}}/>
@@ -308,7 +315,7 @@ function App() {
               </div>
             )}
           </>}
-
+ 
           {phase==="done"&&(
             <div style={{background:C.surface,borderRadius:16,padding:"36px 24px",textAlign:"center"}}>
               <div style={{fontSize:"3rem",marginBottom:12}}>{sTotal>0&&sCorr/sTotal>=.8?"🎉":sTotal>0&&sCorr/sTotal>=.5?"💪":"📖"}</div>
@@ -326,13 +333,13 @@ function App() {
             </div>
           )}
         </>}
-
+ 
         {tab==="list"&&(
           <div style={{background:C.surface,borderRadius:16,overflow:"hidden"}}>
             <table style={{width:"100%",borderCollapse:"collapse",fontSize:".8rem"}}>
               <thead><tr>{["#","単語","意味（一部）","次回"].map(h=>(<th key={h} style={{textAlign:"left",padding:"10px",color:C.muted,fontWeight:700,fontSize:".66rem",textTransform:"uppercase",borderBottom:`1px solid ${C.border}`}}>{h}</th>))}</tr></thead>
               <tbody>
-                {WORDS.map((w,i)=>{
+                {ALL_WORDS.map((w,i)=>{
                   const c=cards[w[0]]||blank(); const _new=isNew(c),_due=isDue(c)&&!_new;
                   return(<tr key={w[0]}>
                     <td style={{padding:"8px 10px",borderBottom:"1px solid #1e1c30",color:C.muted,fontSize:".68rem"}}>{i+1}</td>
@@ -349,11 +356,99 @@ function App() {
             </table>
           </div>
         )}
-
+ 
         {tab==="settings"&&<>
           <div style={{background:C.surface,borderRadius:16,padding:20,marginBottom:14}}>
+            <div style={{fontSize:".66rem",fontWeight:700,color:C.muted,letterSpacing:".1em",textTransform:"uppercase",marginBottom:12}}>📂 CSVで一括インポート</div>
+            <div style={{fontSize:".78rem",color:C.muted,lineHeight:1.7,marginBottom:12}}>
+              1行目はヘッダー（スキップされます）。<br/>
+              列順: <strong style={{color:C.text}}>英単語, 意味, 例文(英), 例文(日)</strong>
+            </div>
+            <label style={{display:"block",padding:"12px 16px",border:`1.5px dashed ${C.border}`,borderRadius:12,textAlign:"center",cursor:"pointer",background:C.surface2,color:C.muted,fontSize:".84rem"}}>
+              📁 CSVファイルを選択
+              <input type="file" accept=".csv" style={{display:"none"}} onChange={e=>{
+                const file=e.target.files[0]; if(!file) return;
+                const reader=new FileReader();
+                reader.onload=ev=>{
+                  const lines=ev.target.result.replace(/\r/g,"").split("\n").filter(l=>l.trim());
+                  const rows=lines.slice(1); // skip header
+                  let added=0, skipped=0;
+                  const current=[...customWords];
+                  rows.forEach(line=>{
+                    const cols=line.split(",").map(s=>s.trim());
+                    if(cols.length<2||!cols[0]) return;
+                    const word=cols[0].toLowerCase();
+                    if(ALL_WORDS.some(w=>w[0]===word)||current.some(w=>w[0]===word)){skipped++;return;}
+                    current.push([word, cols[1]||"", cols[2]||`${word}.`, cols[3]||"―"]);
+                    added++;
+                  });
+                  setCustomWords(current); saveCustom(current);
+                  setCsvMsg(`✅ ${added}語を追加しました${skipped>0?`（${skipped}語はスキップ）`:""}`);
+                  setTimeout(()=>setCsvMsg(""),4000);
+                };
+                reader.readAsText(file,"UTF-8");
+                e.target.value="";
+              }}/>
+            </label>
+            {csvMsg&&<div style={{marginTop:10,fontSize:".78rem",color:C.correct,fontWeight:700}}>{csvMsg}</div>}
+          </div>
+ 
+          <div style={{background:C.surface,borderRadius:16,padding:20,marginBottom:14}}>
+            <div style={{fontSize:".66rem",fontWeight:700,color:C.muted,letterSpacing:".1em",textTransform:"uppercase",marginBottom:14}}>➕ 単語を追加</div>
+            {[
+              ["英単語","例: persist","en"],
+              ["意味（品詞付き）","例: (動)持続する、固執する","meaning"],
+              ["例文（英語）","例: Persist in your efforts.","exEn"],
+              ["例文（日本語）","例: 努力を続けなさい。","exJa"],
+            ].map(([label,placeholder,key])=>(
+              <div key={key} style={{marginBottom:10}}>
+                <div style={{fontSize:".7rem",color:C.muted,marginBottom:4}}>{label}</div>
+                <input
+                  value={addForm[key]}
+                  onChange={e=>setAddForm(f=>({...f,[key]:e.target.value}))}
+                  placeholder={placeholder}
+                  style={{width:"100%",padding:"10px 12px",background:C.surface2,border:`1px solid ${C.border}`,borderRadius:10,color:C.text,fontFamily:"inherit",fontSize:".84rem",outline:"none"}}
+                />
+              </div>
+            ))}
+            {addErr&&<div style={{fontSize:".75rem",color:C.wrong,marginBottom:8}}>{addErr}</div>}
+            <button onClick={()=>{
+              const {en,meaning,exEn,exJa}=addForm;
+              if(!en.trim()){setAddErr("英単語を入力してください");return;}
+              if(!meaning.trim()){setAddErr("意味を入力してください");return;}
+              const word=en.trim().toLowerCase();
+              if(ALL_WORDS.some(w=>w[0]===word)){setAddErr(`「${word}」はすでに登録されています`);return;}
+              const newWord=[word, meaning.trim(), exEn.trim()||`${word}.`, exJa.trim()||"―"];
+              const updated=[...customWords,newWord];
+              setCustomWords(updated); saveCustom(updated);
+              setAddForm({en:"",meaning:"",exEn:"",exJa:""}); setAddErr("");
+            }} style={{width:"100%",padding:12,border:"none",borderRadius:10,background:C.accent,color:C.bg,fontFamily:"inherit",fontSize:".88rem",fontWeight:700,cursor:"pointer"}}>
+              追加する
+            </button>
+          </div>
+ 
+          {customWords.length>0&&(
+            <div style={{background:C.surface,borderRadius:16,padding:20,marginBottom:14}}>
+              <div style={{fontSize:".66rem",fontWeight:700,color:C.muted,letterSpacing:".1em",textTransform:"uppercase",marginBottom:12}}>📝 追加した単語（{customWords.length}語）</div>
+              {customWords.map((w,i)=>(
+                <div key={w[0]} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:i<customWords.length-1?`1px solid ${C.border}`:"none"}}>
+                  <div style={{flex:1}}>
+                    <div style={{fontFamily:"Georgia,serif",fontWeight:700,color:C.text,fontSize:".9rem"}}>{w[0]}</div>
+                    <div style={{fontSize:".72rem",color:C.muted,marginTop:2}}>{w[1]}</div>
+                  </div>
+                  <button onClick={()=>{
+                    if(!confirm(`「${w[0]}」を削除しますか？`))return;
+                    const updated=customWords.filter((_,j)=>j!==i);
+                    setCustomWords(updated); saveCustom(updated);
+                  }} style={{padding:"4px 10px",border:`1px solid ${C.wrong}`,borderRadius:8,background:"transparent",color:C.wrong,fontFamily:"inherit",fontSize:".72rem",cursor:"pointer"}}>削除</button>
+                </div>
+              ))}
+            </div>
+          )}
+ 
+          <div style={{background:C.surface,borderRadius:16,padding:20,marginBottom:14}}>
             <div style={{fontSize:".66rem",fontWeight:700,color:C.muted,letterSpacing:".1em",textTransform:"uppercase",marginBottom:12}}>統計</div>
-            <div style={{fontSize:".84rem",color:C.muted}}>登録単語数: <strong style={{color:C.text}}>{WORDS.length}語</strong></div>
+            <div style={{fontSize:".84rem",color:C.muted}}>登録単語数: <strong style={{color:C.text}}>{ALL_WORDS.length}語</strong>（銀フレ{WORDS.length}語 + カスタム{customWords.length}語）</div>
             <div style={{fontSize:".84rem",color:C.muted,marginTop:6}}>学習済み: <strong style={{color:C.text}}>{learnedCnt}語</strong></div>
           </div>
           <div style={{background:C.surface,borderRadius:16,padding:20,marginBottom:14}}>
@@ -377,12 +472,12 @@ function App() {
             🗑️ 学習データをリセット
           </button>
         </>}
-
+ 
       </div>
     </div>
   );
 }
-
+ 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(<App />);
 </script>
