@@ -157,6 +157,12 @@ const LSKEY_CUSTOM="ginflare_custom_words";
 function App() {
   const [cards,setCards]=useState(()=>{try{return JSON.parse(localStorage.getItem(LSKEY)||"{}");}catch{return {};}});
   const [customWords,setCustomWords]=useState(()=>{try{return JSON.parse(localStorage.getItem(LSKEY_CUSTOM)||"[]");}catch{return [];}});
+  const [deletedBuiltins,setDeletedBuiltins]=useState(()=>{try{return new Set(JSON.parse(localStorage.getItem("ginflare_deleted")||"[]"));}catch{return new Set();}});
+  const [editedBuiltins,setEditedBuiltins]=useState(()=>{try{return JSON.parse(localStorage.getItem("ginflare_edits")||"{}");}catch{return {};}});
+  const [studyDates,setStudyDates]=useState(()=>{try{return new Set(JSON.parse(localStorage.getItem("ginflare_dates")||"[]"));}catch{return new Set();}});
+  const [editingWord,setEditingWord]=useState(null);
+  const [editForm,setEditForm]=useState({en:"",meaning:"",exEn:"",exJa:""});
+  const [confirmBulk,setConfirmBulk]=useState(false);
   const [tab,setTab]=useState("study");
   const [addForm,setAddForm]=useState({en:"",meaning:"",exEn:"",exJa:""});
   const [addErr,setAddErr]=useState("");
@@ -181,7 +187,21 @@ function App() {
   const save = (c) => { try{localStorage.setItem(LSKEY,JSON.stringify(c));}catch{} };
   const saveCustom = (cw) => { try{localStorage.setItem(LSKEY_CUSTOM,JSON.stringify(cw));}catch{} };
   const saveFormat = (f) => { try{localStorage.setItem("ginflare_format",f);}catch{} };
-  const ALL_WORDS = [...WORDS, ...customWords];
+  const saveDeleted = (s) => { try{localStorage.setItem("ginflare_deleted",JSON.stringify([...s]));}catch{} };
+  const saveEdited = (e) => { try{localStorage.setItem("ginflare_edits",JSON.stringify(e));}catch{} };
+  const saveStudyDate = () => {
+    const today=todayStr();
+    if(!studyDates.has(today)){const ns=new Set(studyDates);ns.add(today);setStudyDates(ns);try{localStorage.setItem("ginflare_dates",JSON.stringify([...ns]));}catch{}}
+  };
+  const EFFECTIVE_WORDS = WORDS.filter(w=>!deletedBuiltins.has(w[0])).map(w=>editedBuiltins[w[0]]||w);
+  const ALL_WORDS = [...EFFECTIVE_WORDS, ...customWords];
+  function getStreak() {
+    let s=0; const today=new Date();
+    for(let i=0;i<365;i++){const d=new Date(today);d.setDate(d.getDate()-i);if(studyDates.has(d.toISOString().slice(0,10)))s++;else if(i>0)break;}
+    return s;
+  }
+  const streak=getStreak();
+  const stampEmoji=(n)=>n>=30?"💎":n>=14?"⭐":n>=7?"🔥":n>=3?"🌸":n>=1?"🌿":"🌱";
   const getCard = en => cards[en]||blank();
   const dueList=ALL_WORDS.filter(w=>isDue(getCard(w[0])));
   const newCount=ALL_WORDS.filter(w=>isNew(getCard(w[0]))).length;
@@ -208,7 +228,7 @@ function App() {
   const activeFormat = practiceConfig.format && practiceMode ? practiceConfig.format : quizFormat;
   function loadNext(q,currentCards) {
     clearInterval(timerRef.current);
-    if(q.length===0){setPhase("done");return;}
+    if(q.length===0){setPhase("done");saveStudyDate();return;}
     const word=q[0]; const {opts:o,corrSet:cs}=buildQ(word);
     setCur(word); setOpts(o); setCorrSet(cs); setPicked(null); setOk(null); setCdwn(0); setCardFlipped(false); setQueue(q);
   }
@@ -290,6 +310,60 @@ function App() {
                 🔁 練習モード（制限なし）
               </button>
             </div>
+            {/* スタンプカレンダー */}
+            <div style={{background:C.surface,borderRadius:16,padding:20,marginBottom:14}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+                <div>
+                  <div style={{fontSize:".66rem",fontWeight:700,color:C.muted,letterSpacing:".1em",textTransform:"uppercase",marginBottom:4}}>学習スタンプ</div>
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <span style={{fontSize:"1.6rem"}}>{stampEmoji(streak)}</span>
+                    <div>
+                      <span style={{fontFamily:"Georgia,serif",fontSize:"1.4rem",color:C.accent,fontWeight:700}}>{streak}</span>
+                      <span style={{fontSize:".72rem",color:C.muted,marginLeft:4}}>日連続</span>
+                    </div>
+                  </div>
+                </div>
+                <div style={{fontSize:".68rem",color:C.muted,textAlign:"right",lineHeight:1.8}}>
+                  {streak===0&&"今日から始めよう 🌱"}
+                  {streak===1&&"いい調子！続けよう"}
+                  {streak>=3&&streak<7&&"3日坊主を超えた！🌸"}
+                  {streak>=7&&streak<14&&"1週間達成！🔥"}
+                  {streak>=14&&streak<30&&"2週間！本物だ ⭐"}
+                  {streak>=30&&"すごい継続力！💎"}
+                </div>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:4}}>
+                {Array.from({length:21},(_,i)=>{
+                  const d=new Date(); d.setDate(d.getDate()-(20-i));
+                  const ds=d.toISOString().slice(0,10);
+                  const studied=studyDates.has(ds);
+                  const isToday=ds===todayStr();
+                  const dow=["日","月","火","水","木","金","土"][d.getDay()];
+                  return(
+                    <div key={ds} style={{textAlign:"center"}}>
+                      {i<7&&<div style={{fontSize:".52rem",color:isToday?C.accent:C.muted,marginBottom:2,fontWeight:isToday?700:400}}>{dow}</div>}
+                      {i>=7&&<div style={{fontSize:".52rem",marginBottom:2}}>&nbsp;</div>}
+                      <div style={{
+                        width:"100%",aspectRatio:"1",borderRadius:8,
+                        background:studied?"#a78bfa22":C.surface2,
+                        border:isToday?`1.5px solid ${C.accent}`:`1px solid ${studied?"#a78bfa44":C.border}`,
+                        display:"flex",alignItems:"center",justifyContent:"center",
+                        fontSize:studied?"1rem":".55rem",
+                        color:studied?"inherit":C.border,
+                      }}>
+                        {studied?stampEmoji(streak):"·"}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{display:"flex",gap:6,marginTop:10,flexWrap:"wrap"}}>
+                {[["🌱","1日〜"],["🌿","〜"],["🌸","3日〜"],["🔥","7日〜"],["⭐","14日〜"],["💎","30日〜"]].map(([e,l])=>(
+                  <span key={e} style={{fontSize:".6rem",color:C.muted}}>{e}{l}</span>
+                ))}
+              </div>
+            </div>
+
             <div style={{background:C.surface,borderRadius:16,padding:20}}>
               <div style={{fontSize:".66rem",fontWeight:700,color:C.muted,letterSpacing:".1em",textTransform:"uppercase",marginBottom:12}}>今後7日間の予定</div>
               <div style={{display:"flex",gap:4,alignItems:"flex-end"}}>
@@ -379,8 +453,8 @@ function App() {
                   <span style={{fontSize:".8rem",opacity:.4}}>🔊</span>
                 </div>
 
-                {/* 例文（めくった後のみ表示・ターゲット単語をハイライト） */}
-                {cardFlipped&&<div style={{fontSize:".95rem",lineHeight:1.8,padding:"12px 14px",background:C.surface2,borderRadius:10,marginBottom:16}}>
+                {/* 例文（常に表示・ターゲット単語をハイライト） */}
+                <div style={{fontSize:".95rem",lineHeight:1.8,padding:"12px 14px",background:C.surface2,borderRadius:10,marginBottom:16}}>
                   {(()=>{
                     const ex=cur[2];
                     const word=cur[0];
@@ -392,11 +466,11 @@ function App() {
                         : <span key={i} style={{color:C.text}}>{p}</span>
                     );
                   })()}
-                </div>}
+                </div>
 
                 {/* めくる前のヒント */}
                 {!cardFlipped&&(
-                  <div style={{marginTop:16,fontSize:".78rem",color:C.muted,display:"flex",alignItems:"center",gap:6}}>
+                  <div style={{marginTop:4,fontSize:".78rem",color:C.muted,display:"flex",alignItems:"center",gap:6}}>
                     <span>👆</span> タップして意味を確認
                   </div>
                 )}
@@ -523,25 +597,88 @@ function App() {
         </>}
 
         {tab==="list"&&(
-          <div style={{background:C.surface,borderRadius:16,overflow:"hidden"}}>
-            <table style={{width:"100%",borderCollapse:"collapse",fontSize:".8rem"}}>
-              <thead><tr>{["#","単語","意味（一部）","次回"].map(h=>(<th key={h} style={{textAlign:"left",padding:"10px",color:C.muted,fontWeight:700,fontSize:".66rem",textTransform:"uppercase",borderBottom:`1px solid ${C.border}`}}>{h}</th>))}</tr></thead>
-              <tbody>
-                {ALL_WORDS.map((w,i)=>{
-                  const c=cards[w[0]]||blank(); const _new=isNew(c),_due=isDue(c)&&!_new;
-                  return(<tr key={w[0]}>
-                    <td style={{padding:"8px 10px",borderBottom:"1px solid #1e1c30",color:C.muted,fontSize:".68rem"}}>{i+1}</td>
-                    <td style={{padding:"8px 10px",borderBottom:"1px solid #1e1c30",fontWeight:700,fontFamily:"Georgia,serif"}}>{w[0]}</td>
-                    <td style={{padding:"8px 10px",borderBottom:"1px solid #1e1c30",color:C.muted,fontSize:".76rem"}}>{getMeanings(w[1])[0]}</td>
-                    <td style={{padding:"8px 10px",borderBottom:"1px solid #1e1c30"}}>
-                      {_new?<span style={{fontSize:".6rem",padding:"2px 6px",borderRadius:99,background:"#60a5fa22",color:C.blue,fontWeight:700}}>NEW</span>
-                        :_due?<span style={{fontSize:".6rem",padding:"2px 6px",borderRadius:99,background:"#e8c54733",color:C.accent,fontWeight:700}}>今日</span>
-                        :<span style={{fontSize:".6rem",padding:"2px 6px",borderRadius:99,background:C.surface2,color:C.muted}}>{c.dueDate}</span>}
-                    </td>
-                  </tr>);
-                })}
-              </tbody>
-            </table>
+          <div>
+            {/* カスタム単語一括削除 */}
+            {customWords.length>0&&(
+              <div style={{marginBottom:10,padding:"10px 14px",background:C.surface,borderRadius:12}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <span style={{fontSize:".78rem",color:C.muted}}>カスタム単語 <strong style={{color:C.text}}>{customWords.length}語</strong></span>
+                  {!confirmBulk
+                    ? <button onClick={()=>setConfirmBulk(true)}
+                        style={{padding:"6px 14px",border:`1px solid ${C.wrong}`,borderRadius:8,background:"transparent",color:C.wrong,fontFamily:"inherit",fontSize:".76rem",fontWeight:700,cursor:"pointer"}}>
+                        一括削除
+                      </button>
+                    : <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                        <span style={{fontSize:".72rem",color:C.wrong}}>本当に削除？</span>
+                        <button onClick={()=>{setCustomWords([]);saveCustom([]);setConfirmBulk(false);}}
+                          style={{padding:"6px 12px",border:"none",borderRadius:8,background:C.wrong,color:"#fff",fontFamily:"inherit",fontSize:".76rem",fontWeight:700,cursor:"pointer"}}>削除</button>
+                        <button onClick={()=>setConfirmBulk(false)}
+                          style={{padding:"6px 10px",border:`1px solid ${C.border}`,borderRadius:8,background:"transparent",color:C.muted,fontFamily:"inherit",fontSize:".76rem",cursor:"pointer"}}>キャンセル</button>
+                      </div>
+                  }
+                </div>
+              </div>
+            )}
+            {/* 編集フォーム */}
+            {editingWord&&(
+              <div style={{background:C.surface,borderRadius:16,padding:20,marginBottom:12,border:`1.5px solid #a78bfa`}}>
+                <div style={{fontSize:".72rem",fontWeight:700,color:"#a78bfa",marginBottom:12}}>✏️ 編集中: {editingWord}</div>
+                {[["意味（品詞付き）","meaning"],["例文（英語）","exEn"],["例文（日本語）","exJa"]].map(([label,key])=>(
+                  <div key={key} style={{marginBottom:8}}>
+                    <div style={{fontSize:".66rem",color:C.muted,marginBottom:3}}>{label}</div>
+                    <input value={editForm[key]} onChange={e=>setEditForm(f=>({...f,[key]:e.target.value}))}
+                      style={{width:"100%",padding:"8px 10px",background:C.surface2,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,fontFamily:"inherit",fontSize:".82rem",outline:"none"}}/>
+                  </div>
+                ))}
+                <div style={{display:"flex",gap:8,marginTop:12}}>
+                  <button onClick={()=>{
+                    const isCustom=customWords.some(w=>w[0]===editingWord);
+                    if(isCustom){
+                      const updated=customWords.map(w=>w[0]===editingWord?[w[0],editForm.meaning,editForm.exEn,editForm.exJa]:w);
+                      setCustomWords(updated);saveCustom(updated);
+                    } else {
+                      const ne={...editedBuiltins,[editingWord]:[editingWord,editForm.meaning,editForm.exEn,editForm.exJa]};
+                      setEditedBuiltins(ne);saveEdited(ne);
+                    }
+                    setEditingWord(null);
+                  }} style={{flex:1,padding:"10px",border:"none",borderRadius:10,background:"#a78bfa",color:C.bg,fontFamily:"inherit",fontSize:".84rem",fontWeight:700,cursor:"pointer"}}>保存</button>
+                  <button onClick={()=>setEditingWord(null)}
+                    style={{padding:"10px 16px",border:`1px solid ${C.border}`,borderRadius:10,background:"transparent",color:C.muted,fontFamily:"inherit",fontSize:".84rem",cursor:"pointer"}}>キャンセル</button>
+                </div>
+              </div>
+            )}
+            <div style={{background:C.surface,borderRadius:16,overflow:"hidden"}}>
+              <table style={{width:"100%",borderCollapse:"collapse",fontSize:".8rem"}}>
+                <thead><tr>{["#","単語","意味","次回",""].map(h=>(<th key={h} style={{textAlign:"left",padding:"10px",color:C.muted,fontWeight:700,fontSize:".62rem",textTransform:"uppercase",borderBottom:`1px solid ${C.border}`}}>{h}</th>))}</tr></thead>
+                <tbody>
+                  {ALL_WORDS.map((w,i)=>{
+                    const c=cards[w[0]]||blank(); const _new=isNew(c),_due=isDue(c)&&!_new;
+                    const isCustom=customWords.some(x=>x[0]===w[0]);
+                    return(<tr key={w[0]}>
+                      <td style={{padding:"8px 10px",borderBottom:"1px solid #1e1c30",color:C.muted,fontSize:".66rem"}}>{i+1}</td>
+                      <td style={{padding:"8px 10px",borderBottom:"1px solid #1e1c30",fontWeight:700,fontFamily:"Georgia,serif"}}>
+                        {w[0]}
+                        {isCustom&&<span style={{marginLeft:5,fontSize:".55rem",padding:"1px 5px",borderRadius:99,background:"#60a5fa22",color:C.blue}}>追加</span>}
+                      </td>
+                      <td style={{padding:"8px 10px",borderBottom:"1px solid #1e1c30",color:C.muted,fontSize:".74rem"}}>{getMeanings(w[1])[0]}</td>
+                      <td style={{padding:"8px 10px",borderBottom:"1px solid #1e1c30"}}>
+                        {_new?<span style={{fontSize:".58rem",padding:"2px 6px",borderRadius:99,background:"#60a5fa22",color:C.blue,fontWeight:700}}>NEW</span>
+                          :_due?<span style={{fontSize:".58rem",padding:"2px 6px",borderRadius:99,background:"#e8c54733",color:C.accent,fontWeight:700}}>今日</span>
+                          :<span style={{fontSize:".58rem",padding:"2px 6px",borderRadius:99,background:C.surface2,color:C.muted}}>{c.dueDate}</span>}
+                      </td>
+                      <td style={{padding:"6px 8px",borderBottom:"1px solid #1e1c30",whiteSpace:"nowrap"}}>
+                        <button onClick={()=>{setEditingWord(w[0]);setEditForm({en:w[0],meaning:w[1],exEn:w[2],exJa:w[3]});window.scrollTo(0,0);}}
+                          style={{padding:"4px 8px",border:`1px solid ${C.border}`,borderRadius:6,background:"transparent",color:C.muted,fontFamily:"inherit",fontSize:".7rem",cursor:"pointer",marginRight:4}}>✏️</button>
+                        <button onClick={()=>{
+                          if(isCustom){const u=customWords.filter(x=>x[0]!==w[0]);setCustomWords(u);saveCustom(u);}
+                          else{const ns=new Set(deletedBuiltins);ns.add(w[0]);setDeletedBuiltins(ns);saveDeleted(ns);}
+                        }} style={{padding:"4px 8px",border:`1px solid ${C.wrong}44`,borderRadius:6,background:"transparent",color:C.wrong,fontFamily:"inherit",fontSize:".7rem",cursor:"pointer"}}>🗑️</button>
+                      </td>
+                    </tr>);
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
 
@@ -617,52 +754,31 @@ function App() {
 
           {customWords.length>0&&(
             <div style={{background:C.surface,borderRadius:16,padding:20,marginBottom:14}}>
-              <div style={{fontSize:".66rem",fontWeight:700,color:C.muted,letterSpacing:".1em",textTransform:"uppercase",marginBottom:12}}>📝 追加した単語（{customWords.length}語）</div>
-              {customWords.map((w,i)=>(
-                <div key={w[0]} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:i<customWords.length-1?`1px solid ${C.border}`:"none"}}>
-                  <div style={{flex:1}}>
-                    <div style={{fontFamily:"Georgia,serif",fontWeight:700,color:C.text,fontSize:".9rem"}}>{w[0]}</div>
-                    <div style={{fontSize:".72rem",color:C.muted,marginTop:2}}>{w[1]}</div>
-                  </div>
-                  <button onClick={()=>{
-                    if(!confirm(`「${w[0]}」を削除しますか？`))return;
-                    const updated=customWords.filter((_,j)=>j!==i);
-                    setCustomWords(updated); saveCustom(updated);
-                  }} style={{padding:"4px 10px",border:`1px solid ${C.wrong}`,borderRadius:8,background:"transparent",color:C.wrong,fontFamily:"inherit",fontSize:".72rem",cursor:"pointer"}}>削除</button>
-                </div>
-              ))}
+              <div style={{fontSize:".66rem",fontWeight:700,color:C.muted,letterSpacing:".1em",textTransform:"uppercase",marginBottom:12}}>統計</div>
+              <div style={{fontSize:".84rem",color:C.muted}}>登録単語数: <strong style={{color:C.text}}>{ALL_WORDS.length}語</strong>（銀フレ{EFFECTIVE_WORDS.length}語 + カスタム{customWords.length}語）</div>
+              <div style={{fontSize:".84rem",color:C.muted,marginTop:6}}>学習済み: <strong style={{color:C.text}}>{learnedCnt}語</strong></div>
+            </div>
+          )}
+          {customWords.length===0&&(
+            <div style={{background:C.surface,borderRadius:16,padding:20,marginBottom:14}}>
+              <div style={{fontSize:".66rem",fontWeight:700,color:C.muted,letterSpacing:".1em",textTransform:"uppercase",marginBottom:12}}>統計</div>
+              <div style={{fontSize:".84rem",color:C.muted}}>登録単語数: <strong style={{color:C.text}}>{ALL_WORDS.length}語</strong>（銀フレ{EFFECTIVE_WORDS.length}語）</div>
+              <div style={{fontSize:".84rem",color:C.muted,marginTop:6}}>学習済み: <strong style={{color:C.text}}>{learnedCnt}語</strong></div>
             </div>
           )}
 
           <div style={{background:C.surface,borderRadius:16,padding:20,marginBottom:14}}>
-            <div style={{fontSize:".66rem",fontWeight:700,color:C.muted,letterSpacing:".1em",textTransform:"uppercase",marginBottom:12}}>統計</div>
-            <div style={{fontSize:".84rem",color:C.muted}}>登録単語数: <strong style={{color:C.text}}>{ALL_WORDS.length}語</strong>（銀フレ{WORDS.length}語 + カスタム{customWords.length}語）</div>
-            <div style={{fontSize:".84rem",color:C.muted,marginTop:6}}>学習済み: <strong style={{color:C.text}}>{learnedCnt}語</strong></div>
-            <div style={{marginTop:16,paddingTop:14,borderTop:`1px solid ${C.border}`}}>
-              <div style={{fontSize:".7rem",fontWeight:700,color:C.muted,letterSpacing:".08em",textTransform:"uppercase",marginBottom:10}}>通常学習の形式</div>
-              <div style={{display:"flex",gap:8}}>
-                {[["choice","📝 4択"],["flash","🃏 フラッシュカード"]].map(([val,label])=>(
-                  <button key={val} onClick={()=>{setQuizFormat(val);saveFormat(val);}}
-                    style={{flex:1,padding:"10px 8px",border:`1.5px solid ${quizFormat===val?"#a78bfa":C.border}`,borderRadius:10,fontFamily:"inherit",fontSize:".8rem",fontWeight:700,background:quizFormat===val?"#a78bfa18":"transparent",color:quizFormat===val?"#a78bfa":C.muted,cursor:"pointer"}}>
-                    {label}
-                  </button>
-                ))}
-              </div>
-              <div style={{fontSize:".7rem",color:C.muted,marginTop:8,lineHeight:1.6}}>
-                {quizFormat==="choice"?"4択：テンポよく大量に。初見・周回向き。":"フラッシュカード：自力で思い出してSM-2に4段階評価。長期定着向き。"}
-              </div>
+            <div style={{fontSize:".7rem",fontWeight:700,color:C.muted,letterSpacing:".08em",textTransform:"uppercase",marginBottom:10}}>通常学習の形式</div>
+            <div style={{display:"flex",gap:8}}>
+              {[["choice","📝 4択"],["flash","🃏 フラッシュカード"]].map(([val,label])=>(
+                <button key={val} onClick={()=>{setQuizFormat(val);saveFormat(val);}}
+                  style={{flex:1,padding:"10px 8px",border:`1.5px solid ${quizFormat===val?"#a78bfa":C.border}`,borderRadius:10,fontFamily:"inherit",fontSize:".8rem",fontWeight:700,background:quizFormat===val?"#a78bfa18":"transparent",color:quizFormat===val?"#a78bfa":C.muted,cursor:"pointer"}}>
+                  {label}
+                </button>
+              ))}
             </div>
-          </div>
-          <div style={{background:C.surface,borderRadius:16,padding:20,marginBottom:14}}>
-            <div style={{fontSize:".66rem",fontWeight:700,color:C.muted,letterSpacing:".1em",textTransform:"uppercase",marginBottom:14}}>📱 iPhoneにアプリとして追加</div>
-            {[["1","SafariでこのページのURLを開く","ChromeではNG"],["2","画面下部の共有ボタンをタップ","□から↑が出ているアイコン"],["3","「ホーム画面に追加」を選ぶ","リストをスクロールして探す"],["4","「追加」をタップ","完了！アイコンが追加されます"]].map(([n,t,s])=>(
-              <div key={n} style={{display:"flex",gap:12,marginBottom:12,alignItems:"flex-start"}}>
-                <div style={{background:C.accent,color:C.bg,borderRadius:99,width:24,height:24,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,fontSize:".75rem",flexShrink:0,marginTop:1}}>{n}</div>
-                <div><div style={{fontSize:".84rem",color:C.text,fontWeight:700,marginBottom:2}}>{t}</div><div style={{fontSize:".72rem",color:C.muted}}>{s}</div></div>
-              </div>
-            ))}
-            <div style={{fontSize:".72rem",color:C.muted,padding:"10px 12px",background:C.surface2,borderRadius:8,lineHeight:1.6}}>
-              💡 ホーム画面から起動するとlocalStorageにデータが保存され、次回以降も引き継がれます。
+            <div style={{fontSize:".7rem",color:C.muted,marginTop:8,lineHeight:1.6}}>
+              {quizFormat==="choice"?"4択：テンポよく大量に。初見・周回向き。":"フラッシュカード：自力で思い出してSM-2に4段階評価。長期定着向き。"}
             </div>
           </div>
           <div style={{background:C.surface,borderRadius:16,padding:20,marginBottom:14}}>
